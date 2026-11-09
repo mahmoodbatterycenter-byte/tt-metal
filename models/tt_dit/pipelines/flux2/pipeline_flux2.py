@@ -729,7 +729,7 @@ class Flux2Pipeline:
                 self._mesh_device,
                 [None, None],
                 ccl_manager=self._vae_ccl_manager,
-                pre_transfer_fn=float_to_uint8,
+                pre_transfer_fn=lambda t: float_to_uint8(t, round=True),
             )
             output = [Image.fromarray(image.numpy()) for image in decoded_output]
 
