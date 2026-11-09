@@ -26,6 +26,10 @@ using ttnn::operations::data_movement::common_tm_bw_model;
 
 namespace {
 bool can_use_sharded_optimized_factory(const PadParams& operation_attributes, const Tensor& input_tensor) {
+    // Bug 3 fix: Check if output_mem_config has shard_spec before dereferencing
+    if (!operation_attributes.output_mem_config.shard_spec().has_value()) {
+        return false;
+    }
     if (!input_tensor.shard_spec().has_value()) {
         return false;
     }
@@ -44,11 +48,29 @@ bool can_use_sharded_optimized_factory(const PadParams& operation_attributes, co
     if (operation_attributes.sub_core_grids.has_value()) {
         return false;
     }
-    if (operation_attributes.output_padded_shape[-1] != operation_attributes.output_mem_config.shard_spec()->shape[1]) {
+
+    const auto& in_spec = input_tensor.shard_spec().value();
+    const auto& out_spec = operation_attributes.output_mem_config.shard_spec().value();
+
+    // Bug 1 fix: Add missing validation checks for grid, orientation, and shard_height
+    if (in_spec.grid != out_spec.grid) {
         return false;
     }
-    if (operation_attributes.output_mem_config.shard_spec().value().shape[0] <
-        input_tensor.shard_spec().value().shape[0]) {
+    if (in_spec.orientation != out_spec.orientation) {
+        return false;
+    }
+    if (in_spec.shape[0] != out_spec.shape[0]) {
+        return false;
+    }
+    // Verify input tensor's padded width matches shard width
+    if (input_tensor.padded_shape()[-1] != in_spec.shape[1]) {
+        return false;
+    }
+
+    if (operation_attributes.output_padded_shape[-1] != out_spec.shape[1]) {
+        return false;
+    }
+    if (out_spec.shape[0] < in_spec.shape[0]) {
         // Note this case causes the sharded optimized PadRmShardedWidthOnlyProgramFactory{} to hang.
         return false;
     }
