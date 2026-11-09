@@ -287,9 +287,11 @@ class MotifPipeline(PipelineAPIMixin):
 
             velocity_preds = []
             for idx, tracer in enumerate(self._tracers):
+                # Round timestep to integer to match reference: (t * 1000).round()
+                rounded_timestep = round(t * 1000)
                 timestep = ttnn.full(
                     [1, 1],
-                    fill_value=t * 1000,
+                    fill_value=rounded_timestep,
                     layout=ttnn.TILE_LAYOUT,
                     dtype=ttnn.float32,
                     device=self._devices[idx],

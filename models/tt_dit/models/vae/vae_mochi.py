@@ -1232,6 +1232,11 @@ class MochiVAEDecoderAdapter:
             self._tracer = Tracer(self._decoder.forward, device=self.device, prep_run=False)
             self._decoder_state_dict = torch_vae.decoder.state_dict()
 
+            # Calculate temporal compression ratio for dropping causal warm-up frames
+            self._temporal_compression_ratio = 1
+            for expansion in self._decoder.temporal_expansions:
+                self._temporal_compression_ratio *= expansion
+
     def is_loaded(self) -> bool:
         return self._torch_vae is not None or self._decoder.is_loaded()
 
@@ -1259,4 +1264,11 @@ class MochiVAEDecoderAdapter:
         tt_latents = self._decoder.prepare_input(latents)
         forward = self._tracer if traced else self._decoder.forward
         tt_output = forward(tt_latents)
-        return self._decoder.postprocess_output(tt_output, latents.shape)
+        result = self._decoder.postprocess_output(tt_output, latents.shape)
+
+        # Drop causal warm-up frames to match diffusers behavior
+        # The TT VAE returns extra frames at the start due to causal convolution padding
+        if result.size(2) >= self._temporal_compression_ratio:
+            result = result[:, :, self._temporal_compression_ratio - 1 :, :, :]
+
+        return result

@@ -43,6 +43,8 @@ class GemmaConfig:
         rope_local_base_freq: float = 10000.0,
         rope_linear_scaling_factor: float = 8.0,
         sliding_window_pattern: int = 6,
+        sliding_window: int = 1024,
+        query_pre_attn_scalar: int = 256,
         max_position_embeddings: int = 8192,
         hidden_layer_index: int = -1,
     ):
@@ -61,6 +63,8 @@ class GemmaConfig:
         self.rope_local_base_freq = rope_local_base_freq
         self.rope_linear_scaling_factor = rope_linear_scaling_factor
         self.sliding_window_pattern = sliding_window_pattern
+        self.sliding_window = sliding_window
+        self.query_pre_attn_scalar = query_pre_attn_scalar
         self.max_position_embeddings = max_position_embeddings
         self.hidden_layer_index = hidden_layer_index
 
@@ -118,6 +122,12 @@ class GemmaRotaryEmbedding(Module):
 
     def forward(self, seq_len: int) -> tuple[ttnn.Tensor, ttnn.Tensor]:
         """Device cos/sin for the (fixed) sequence length, bound once and reused."""
+        cached_seq_len = self._cos_cached.shape[2]
+        if seq_len > cached_seq_len:
+            raise ValueError(
+                f"Requested seq_len {seq_len} exceeds cached RoPE table size {cached_seq_len}. "
+                f"RoPE cos/sin would be truncated."
+            )
         if self._tt_cos.value is None:
             # HF-format cos/sin for ttnn.experimental.rotary_embedding_hf: duplicate the half-dim
             # freqs to full head_dim as [c0..c_{d/2-1}, c0..c_{d/2-1}] (concat, not interleave).
@@ -152,6 +162,7 @@ class GemmaAttention(Module):
         self.num_kv_heads = config.num_key_value_heads
         self.head_dim = config.head_dim
         self.hidden_size = config.hidden_size
+        self.query_pre_attn_scalar = config.query_pre_attn_scalar
 
         tp = parallel_config.tensor_parallel.factor
         self.num_local_heads = self.num_heads // tp
@@ -268,7 +279,7 @@ class GemmaAttention(Module):
 
         # SDPA — use is_causal when no mask, or explicit mask when padding present.
         # TTNN SDPA doesn't support both is_causal and attn_mask simultaneously.
-        # Gemma-3 scales by query_pre_attn_scalar**-0.5 = head_dim**-0.5 here; pass it
+        # Gemma-3 scales by query_pre_attn_scalar**-0.5 here; pass it
         # explicitly rather than relying on the SDPA default.
         attn_output = ttnn.transformer.scaled_dot_product_attention(
             q,
@@ -276,7 +287,7 @@ class GemmaAttention(Module):
             v,
             is_causal=(attn_mask is None),
             attn_mask=attn_mask,
-            scale=1.0 / math.sqrt(self.head_dim),
+            scale=1.0 / math.sqrt(self.query_pre_attn_scalar),
             program_config=self.sdpa_config,
             compute_kernel_config=self.compute_config,
         )
@@ -512,13 +523,18 @@ class GemmaEncoder(Module):
         )
 
     def forward(self, token_ids: ttnn.Tensor, *, tt_attn_mask: ttnn.Tensor | None = None) -> list[ttnn.Tensor]:
-        """Embed → 48 decoder layers → final norm. Returns [embed, L0..L47, final_norm] on device.
+        """Embed → 448 decoder layers → final norm. Returns [embed, L0..L47, final_norm] on device.
         Pure device graph (mask pre-built by build_attn_mask, RoPE cos/sin resident) so the whole
         forward replays as one ttnn trace."""
         hidden_states = self.embed_tokens(token_ids)
         hidden_states = ttnn.multiply(hidden_states, math.sqrt(self.config.hidden_size))
 
         seq_len = token_ids.shape[-1]
+        if seq_len > self.config.sliding_window:
+            raise ValueError(
+                f"Sequence length {seq_len} exceeds Gemma-3 sliding window {self.config.sliding_window}. "
+                f"Local attention layers would silently diverge from reference."
+            )
         cos_g, sin_g = self.rotary_emb_global(seq_len)
         cos_l, sin_l = self.rotary_emb_local(seq_len)
 
