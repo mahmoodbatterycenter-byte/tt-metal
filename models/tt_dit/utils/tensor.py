@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import weakref
 from typing import TYPE_CHECKING
 
 import torch
@@ -506,12 +507,25 @@ def float_to_unit_range(t: ttnn.Tensor) -> ttnn.Tensor:
     return t
 
 
-def float_to_uint8(t: ttnn.Tensor) -> ttnn.Tensor:
-    """On-device float-to-uint8: map from [-1.0, 1.0] to [0, 255]"""
+def float_to_uint8(t: ttnn.Tensor, *, round: bool = False) -> ttnn.Tensor:
+    """On-device float-to-uint8: map from [-1.0, 1.0] to [0, 255]
+
+    Args:
+        t: Input tensor in [-1.0, 1.0] range
+        round: If True, add 0.5 before typecast to round instead of truncate.
+               Must be done in fp32 to avoid bf16 ties-to-even issues at values >= 128.
+               This matches diffusers image post-processing which uses .round().
+    """
     t = ttnn.to_layout(t, ttnn.TILE_LAYOUT)
     t = ttnn.add(t, 1.0)  # shift to [0, 2.0]
     t = ttnn.multiply(t, 0.5 * 255.0)  # scale to [0, 1.0] then [0, 255]
     t = ttnn.clamp(t, min=0.0, max=255.0)
+    if round:
+        # Add 0.5 in fp32 before typecast to achieve rounding instead of truncation.
+        # This must be fp32 because bf16 adding 0.5 to integers >= 128 rounds ties-to-even,
+        # which would shift odd values incorrectly.
+        t = ttnn.typecast(t, ttnn.float32)
+        t = ttnn.add(t, 0.5)
     t = ttnn.to_layout(t, ttnn.ROW_MAJOR_LAYOUT)
     return ttnn.typecast(t, ttnn.uint8)
 
@@ -973,8 +987,10 @@ def select_row_compile_once(x: ttnn.Tensor, index: int) -> ttnn.Tensor:
     return ttnn.embedding(rows, table, layout=ttnn.TILE_LAYOUT)
 
 
-_tril_cache: dict[tuple, ttnn.Tensor] = {}
-_triu_cache: dict[tuple, ttnn.Tensor] = {}
+# Attention mask caches keyed by device (weak ref) to avoid leaking device tensors when device is closed.
+# Nested dict: device -> {(mask_shape, diagonal): tensor}
+_tril_cache: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_triu_cache: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def tril(
@@ -994,13 +1010,15 @@ def tril(
 
     mask_shape = tuple(x.shape)[-2:]
 
-    cache_key = (mask_shape, device.id(), diagonal)
-    if cache_key in _tril_cache:
-        mask = _tril_cache[cache_key]
+    # Nested dict: device -> {(mask_shape, diagonal): tensor}
+    device_cache = _tril_cache.setdefault(device, {})
+    cache_key = (mask_shape, diagonal)
+    if cache_key in device_cache:
+        mask = device_cache[cache_key]
     else:
         mask = full(mask_shape, 1.0, dtype=ttnn.bfloat4_b, layout=ttnn.TILE_LAYOUT, device=device)
         mask = ttnn.tril(mask, diagonal=diagonal)
-        _tril_cache[cache_key] = mask
+        device_cache[cache_key] = mask
 
     return ttnn.mul(x, mask, memory_config=memory_config, output_tensor=output_tensor)
 
@@ -1022,13 +1040,15 @@ def triu(
 
     mask_shape = tuple(x.shape)[-2:]
 
-    cache_key = (mask_shape, device.id(), diagonal)
-    if cache_key in _triu_cache:
-        mask = _triu_cache[cache_key]
+    # Nested dict: device -> {(mask_shape, diagonal): tensor}
+    device_cache = _triu_cache.setdefault(device, {})
+    cache_key = (mask_shape, diagonal)
+    if cache_key in device_cache:
+        mask = device_cache[cache_key]
     else:
         mask = full(mask_shape, 1.0, dtype=ttnn.bfloat4_b, layout=ttnn.TILE_LAYOUT, device=device)
         mask = ttnn.triu(mask, diagonal=diagonal)
-        _triu_cache[cache_key] = mask
+        device_cache[cache_key] = mask
 
     return ttnn.mul(x, mask, memory_config=memory_config, output_tensor=output_tensor)
 
