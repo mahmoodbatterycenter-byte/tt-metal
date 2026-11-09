@@ -53,6 +53,7 @@ def load_model(
     is_fsdp: bool = False,
     get_torch_state_dict: Callable[[], dict] | None = None,
     create_cache: bool = True,
+    checkpoint_revision: str | None = None,
 ) -> None:
     """
     Load model weights from cache or PyTorch state dict.
@@ -74,6 +75,8 @@ def load_model(
             evaluation - PyTorch model only loads if the cache does not exist. If `None`, cache
             must exist or `MissingCacheError` is raised.
         `create_cache`: Create cache after loading from PyTorch (default: True).
+        `checkpoint_revision`: Optional checkpoint revision identifier (e.g., HF commit hash).
+            If provided, included in cache key to prevent stale weights when checkpoint changes.
 
     Raises:
         `MissingCacheError`: Cache does not exist and `get_torch_state_dict` is `None`.
@@ -91,6 +94,7 @@ def load_model(
         dtype=dtype,
         is_fsdp=is_fsdp,
         required=get_torch_state_dict is None,
+        checkpoint_revision=checkpoint_revision,
     )
 
     if cache_dir is None:
@@ -194,6 +198,7 @@ def model_cache_dir(
     dtype: str = "bf16",
     is_fsdp: bool = False,
     required: bool = True,
+    checkpoint_revision: str | None = None,
 ) -> Path | None:
     cache_dir = _cache_root()
     if cache_dir is None:
@@ -208,6 +213,8 @@ def model_cache_dir(
     key = f"{parallel_key}mesh{mesh_key}_{dtype}"
     if is_fsdp:
         key += "_FSDP"
+    if checkpoint_revision:
+        key += f"_rev-{checkpoint_revision}"
 
     path = Path(cache_dir) / model_name / subfolder / key
 
