@@ -597,8 +597,15 @@ class Flux2Pipeline:
         # the patchified layout, one token per row.
         generator = torch.Generator("cpu").manual_seed(seed) if seed is not None else None
         p = self._patch_size
+        # Draw noise in packed layout (B, C*p*p, H/p, W/p) to match diffusers, then reshape to
+        # token sequence (B, H/p*W/p, C*p*p). This ensures seed-for-seed reproducibility.
         shape = [transformer_batch_size, self._num_channels_latents * p * p, latents_height // p, latents_width // p]
-        latents = torch.randn(shape, generator=generator, dtype=torch.bfloat16).flatten(2).transpose(1, 2).float()
+        latents = (
+            torch.randn(shape, generator=generator, dtype=torch.bfloat16)
+            .permute(0, 2, 3, 1)
+            .reshape(transformer_batch_size, -1, self._num_channels_latents * p * p)
+            .float()
+        )
 
         state = self._denoise_state(width, height, edit=reference is not None)
         image_ids = _prepare_ids(height=latents_height // self._patch_size, width=latents_width // self._patch_size)
@@ -722,7 +729,7 @@ class Flux2Pipeline:
                 self._mesh_device,
                 [None, None],
                 ccl_manager=self._vae_ccl_manager,
-                pre_transfer_fn=float_to_uint8,
+                pre_transfer_fn=lambda t: float_to_uint8(t, round=True),
             )
             output = [Image.fromarray(image.numpy()) for image in decoded_output]
 
