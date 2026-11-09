@@ -39,6 +39,7 @@ class SD35JointAttention(Module):
         ccl_manager=None,
         parallel_config=None,
         padding_config=None,
+        added_kv_proj_dim=None,
     ):
         super().__init__()
 
@@ -49,8 +50,7 @@ class SD35JointAttention(Module):
         self.padded_heads = padding_config.target_heads if padding_config is not None else heads
 
         self.out_dim = out_dim if out_dim is not None else query_dim
-        # Note: added_kv_proj_dim should be passed as parameter, using query_dim as default
-        self.added_kv_proj_dim = query_dim
+        self.added_kv_proj_dim = added_kv_proj_dim if added_kv_proj_dim is not None else query_dim
         self.context_pre_only = context_pre_only
         self.mesh_device = mesh_device
         self.ccl_manager = ccl_manager
