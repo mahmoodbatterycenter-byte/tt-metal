@@ -55,8 +55,8 @@ SoftmaxDeviceOperation::SoftmaxShardedProgramFactoryAttentionOptimized::create_p
     const tt::DataFormat fused_attention_scale_cb_data_format = tt::DataFormat::Float16_b;
     const tt::DataFormat max_scaler_cb_data_format =
         in0_cb_data_format == tt::DataFormat::Float32 ? tt::DataFormat::Float32 : tt::DataFormat::Float16_b;
-    const tt::DataFormat sum_scaler_cb_data_format =
-        im_cb_data_format == tt::DataFormat::Float32 ? tt::DataFormat::Float32 : tt::DataFormat::Float16_b;
+    const tt::DataFormat acc_cb_data_format = fp32_dest_acc_en ? tt::DataFormat::Float32 : tt::DataFormat::Float16_b;
+    const tt::DataFormat sum_scaler_cb_data_format = acc_cb_data_format;
 
     log_debug(tt::LogOp, "in0_cb_data_format: {}", in0_cb_data_format);
     log_debug(tt::LogOp, "out0_cb_data_format: {}", out0_cb_data_format);
