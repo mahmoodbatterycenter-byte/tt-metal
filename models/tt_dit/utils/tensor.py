@@ -506,12 +506,25 @@ def float_to_unit_range(t: ttnn.Tensor) -> ttnn.Tensor:
     return t
 
 
-def float_to_uint8(t: ttnn.Tensor) -> ttnn.Tensor:
-    """On-device float-to-uint8: map from [-1.0, 1.0] to [0, 255]"""
+def float_to_uint8(t: ttnn.Tensor, *, round: bool = False) -> ttnn.Tensor:
+    """On-device float-to-uint8: map from [-1.0, 1.0] to [0, 255]
+
+    Args:
+        t: Input tensor in [-1.0, 1.0] range
+        round: If True, add 0.5 before typecast to round instead of truncate.
+               Must be done in fp32 to avoid bf16 ties-to-even issues at values >= 128.
+               This matches diffusers image post-processing which uses .round().
+    """
     t = ttnn.to_layout(t, ttnn.TILE_LAYOUT)
     t = ttnn.add(t, 1.0)  # shift to [0, 2.0]
     t = ttnn.multiply(t, 0.5 * 255.0)  # scale to [0, 1.0] then [0, 255]
     t = ttnn.clamp(t, min=0.0, max=255.0)
+    if round:
+        # Add 0.5 in fp32 before typecast to achieve rounding instead of truncation.
+        # This must be fp32 because bf16 adding 0.5 to integers >= 128 rounds ties-to-even,
+        # which would shift odd values incorrectly.
+        t = ttnn.typecast(t, ttnn.float32)
+        t = ttnn.add(t, 0.5)
     t = ttnn.to_layout(t, ttnn.ROW_MAJOR_LAYOUT)
     return ttnn.typecast(t, ttnn.uint8)
 

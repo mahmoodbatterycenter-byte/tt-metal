@@ -367,14 +367,16 @@ class StableDiffusion3Pipeline(PipelineAPIMixin):
     def _random_latents(self, *, batch_size: int, dtype: torch.dtype, seed: int) -> list[ttnn.Tensor]:
         torch.manual_seed(seed)
 
+        # Generate noise in NCHW layout to match diffusers reference, then permute to NHWC
+        # for patchify. This ensures seed-for-seed reproducibility with diffusers.
         latents_shape = (
             batch_size,
+            self._num_channels_latents,
             self._height // _VAE_SCALE_FACTOR,
             self._width // _VAE_SCALE_FACTOR,
-            self._num_channels_latents,
         )
 
-        latents = torch.randn(latents_shape, dtype=dtype)
+        latents = torch.randn(latents_shape, dtype=dtype).permute(0, 2, 3, 1)
         latents = self.transformers[0].patchify(latents)
         return from_torch_to_devices(
             latents,
