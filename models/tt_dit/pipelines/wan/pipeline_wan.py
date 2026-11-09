@@ -337,6 +337,9 @@ class WanPipeline(PipelineAPIMixin):
         """
         return {"model_type": "t2v", "checkpoint_name": _DEFAULT_CHECKPOINT}
 
+    DEFAULT_GUIDANCE_SCALE = 4.0
+    DEFAULT_GUIDANCE_SCALE_2 = 3.0
+
     @classmethod
     def default_config(
         cls,
@@ -907,8 +910,8 @@ class WanPipeline(PipelineAPIMixin):
         negative_prompts: Sequence[str] | None = None,
         image_prompt=None,
         num_inference_steps: int,
-        guidance_scale: float = 4.0,
-        guidance_scale_2: float | None = 3.0,
+        guidance_scale: float | None = None,
+        guidance_scale_2: float | None = None,
         flow_shift: float | None = None,
         boundary_ratio: float | None = None,
         num_videos_per_prompt: int | None = 1,
@@ -925,6 +928,12 @@ class WanPipeline(PipelineAPIMixin):
         ``width`` and ``height`` must be one of the configured resolutions, and default to the
         first.
         """
+        # Resolve guidance scales from class defaults if not provided
+        if guidance_scale is None:
+            guidance_scale = self.DEFAULT_GUIDANCE_SCALE
+        if guidance_scale_2 is None:
+            guidance_scale_2 = self.DEFAULT_GUIDANCE_SCALE_2
+
         on_event = on_event if on_event is not None else null_callback
 
         width, height = self._resolve_size(width, height, image_prompt)

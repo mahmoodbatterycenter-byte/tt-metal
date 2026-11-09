@@ -22,7 +22,7 @@ from ...layers.module import Module, ModuleList, Parameter
 from ...utils import cache
 from ...utils.padding import PaddingConfig
 from ...utils.substate import rename_substate, substate
-from ...utils.tensor import bf16_tensor
+from ...utils.tensor import bf16_tensor, float32_tensor
 
 if TYPE_CHECKING:
     from ...parallel.config import DiTParallelConfig
@@ -101,7 +101,7 @@ class TimeTextProjection(Module):
         exponent = exponent / half_dim
         factor = torch.exp(exponent)
 
-        return ttnn.unsqueeze_to_4D(bf16_tensor(factor, device=self.mesh_device))
+        return ttnn.unsqueeze_to_4D(float32_tensor(factor, device=self.mesh_device))
 
     # In order to avoid calling `unsqueeze` in this function, we expect already unsqueezed rank two
     # `timestep` tensor.
@@ -226,6 +226,7 @@ class MotifTransformer(Module):
                 attention_k_chunk_size=self.get_k_chunk_size(sp_factor),
                 attention_q_chunk_size=self.Q_CHUNK_SIZE,
                 attention_exp_approx_mode=self.SDPA_EXP_APPROX_MODE,
+                norm_eps=1e-5,
             )
             for i in range(config.num_layers)
         )
