@@ -9,7 +9,7 @@ import pytest
 import torch
 
 import ttnn
-from tt_py_test_utils_common.utility_functions import is_blackhole
+from tt_py_test_utils_common.utility_functions import is_blackhole, run_for_blackhole
 from tests.ttnn.utils_for_testing import assert_equal, assert_with_pcc
 
 
@@ -855,3 +855,23 @@ def test_transpose_empty_to_sharded_output(device, expect_error):
     )
     with expect_error(RuntimeError, "Sharded WH transpose requires non-zero H and W"):
         ttnn.transpose(x, -2, -1, memory_config=mem)
+
+
+# Every row of the permuted output is padded to a whole 32x32 tile (x=5 -> X_p=32, w=1 -> W_p=32), so the
+# output buffer is n*n*32*32 elements: ~16 GiB at n=2048, more than Wormhole's 12 GiB can allocate.
+# n=2047 sits just below the old uint32 wrap; n=2048 is exactly 2^32 padded elements, which wrapped to 0
+# tiles and left the output unwritten.
+@run_for_blackhole("the 2^32 padded-volume case needs ~16 GiB of DRAM")
+@pytest.mark.slow
+@pytest.mark.parametrize("n", [2047, 2048])
+def test_permute_padded_volume_uint32_overflow_63940(device, n):
+    torch.manual_seed(0)
+    x = torch.randn(n, 5, n, 1)
+    t = ttnn.from_torch(x, dtype=ttnn.float32, layout=ttnn.TILE_LAYOUT, device=device)
+    y = ttnn.to_torch(ttnn.permute(t, [2, 0, 3, 1]))
+    ref = x.permute(2, 0, 3, 1)
+
+    assert y.shape == ref.shape, f"Shape mismatch: {y.shape} vs {ref.shape}"
+    assert torch.equal(y, ref), f"n={n}: permute returned {(y != ref).sum().item()}/{ref.numel()} incorrect elements"
+
+    ttnn.deallocate(t)

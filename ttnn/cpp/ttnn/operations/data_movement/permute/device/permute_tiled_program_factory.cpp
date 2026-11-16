@@ -5,6 +5,7 @@
 #include "ttnn/operations/data_movement/permute/device/permute_device_operation.hpp"
 #include <tt-metalium/host_api.hpp>
 #include <tt-metalium/work_split.hpp>
+#include <limits>
 #include <vector>
 #include <tt-metalium/hal.hpp>
 #include <tt-metalium/experimental/metal2_host_api/program_spec.hpp>
@@ -621,8 +622,8 @@ ttnn::device_operation::ProgramArtifacts PermuteDeviceOperation::MultiCoreTiledG
     const auto& input_mesh_tensor = input_tensor.mesh_tensor();
     const auto& output_mesh_tensor = output_tensor.mesh_tensor();
 
-    uint64_t logical_volume = input_shape.volume();
-    uint64_t num_rows = logical_volume / input_shape[rank - 1];
+    uint32_t logical_volume = input_shape.volume();
+    uint32_t num_rows = logical_volume / input_shape[rank - 1];
     uint32_t y_dim_index_in_input = dims[rank - 2];
 
     uint32_t x_dim_index_in_input = dims[rank - 1];
@@ -669,7 +670,7 @@ ttnn::device_operation::ProgramArtifacts PermuteDeviceOperation::MultiCoreTiledG
     uint64_t xw_blocks_64 = padded_xw_volume / (tile_shape[0] * tile_shape[1]);
     TT_FATAL(
         xw_blocks_64 <= std::numeric_limits<uint32_t>::max(),
-        "permute: tile-padded volume exceeds 2^32 elements (xw_blocks = {}), which is not supported",
+        "permute: tile-padded volume of {} tiles exceeds the uint32_t work-split limit",
         xw_blocks_64);
     uint32_t xw_blocks = static_cast<uint32_t>(xw_blocks_64);
 
@@ -783,7 +784,7 @@ ttnn::device_operation::ProgramArtifacts PermuteDeviceOperation::MultiCoreTiledG
             .data_format_metadata = cb_data_format});
     }
 
-    uint64_t non_x_rows = num_rows / x;
+    uint32_t non_x_rows = num_rows / x;
 
     // ---- Compute config (Style B: build ComputeHardwareConfig directly, mirroring legacy) ----
     bool fp32_dest_acc_en = requires_32bit_dest(cb_data_format);
